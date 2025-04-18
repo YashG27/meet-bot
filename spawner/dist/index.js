@@ -17,25 +17,43 @@ function main() {
         // Disable features that reveal automation
         options.addArguments("--disable-blink-features=AutomationControlled");
         options.addArguments("--use-fake-ui-for-media-stream");
-        options.addArguments("--start-maximized");
         options.addArguments("--window-size=1080,720");
         options.addArguments('--auto-select-desktop-capture-source=[RECORD]');
         options.addArguments('--auto-select-desktop-capture-source=[RECORD]');
         options.addArguments('--enable-usermedia-screen-capturing');
         options.addArguments('--auto-select-tab-capture-source-by-title="Meet"');
         options.addArguments('--allow-running-insecure-content');
-        // Set a realistic user agent
-        options.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36');
-        // Set excludeSwitches and useAutomationExtension using the correct method
-        options.addArguments('--disable-extensions');
-        // Set experimental options properly for JavaScript
-        options.addArguments('--disable-automation');
-        // Set excludeSwitches and useAutomationExtension
-        options.excludeSwitches(['enable-automation']);
+        // Use a recent version
+        // Create a directory to store the user profile (e.g., 'chrome-profile')
+        // You might need to create this directory manually or via Node.js fs module
+        function randomDelay(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+        function typeSlowly(element, text, driver) {
+            return __awaiter(this, void 0, void 0, function* () {
+                for (const char of text) {
+                    yield element.sendKeys(char);
+                    yield driver.sleep(randomDelay(50, 150)); // Small delay between characters
+                }
+            });
+        }
+        // Set a realistic user agent   
         let driver = yield new Builder().forBrowser(Browser.CHROME).setChromeOptions(options).build();
         try {
-            yield driver.get('https://meet.google.com/uus-zswd-zbk');
+            yield driver.get('https://meet.google.com/sen-rxcy-hnj');
             //await driver.findElement(By.name('q')).sendKeys('webdriver', Key.RETURN)
+            // await driver.wait(until.titleIs('webdriver - Google Search'), 100000)
+            const popupButton = yield driver.wait(until.elementLocated(By.xpath('//span[contains(text(), "Got it")]')), 10000);
+            yield popupButton.click();
+            yield driver.sleep(randomDelay(1000, 3000));
+            const nameInput = yield driver.wait(until.elementLocated(By.xpath('//input[@placeholder="Your name"]')), 10000);
+            yield nameInput.click();
+            yield driver.sleep(randomDelay(500, 1500));
+            yield typeSlowly(nameInput, "Meeting Attendee", driver);
+            yield nameInput.sendKeys('value', "Meeting");
+            yield driver.sleep(randomDelay(1000, 4000));
+            const buttonInput = yield driver.wait(until.elementLocated(By.xpath('//span[contains(text(), "Ask to join")]')), 10000);
+            buttonInput.click();
             yield driver.wait(until.titleIs('webdriver - Google Search'), 100000);
         }
         finally {

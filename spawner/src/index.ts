@@ -34,13 +34,14 @@ async function main() {
     async function startScreenshare(driver: WebDriver) {
         console.log("startScreensharecalled")
             const response = await driver.executeScript(`
-        
+        return new Promise(async (resolve, reject) => {
+            try {
                 function wait(delayInMS) {
                     return new Promise((resolve) => setTimeout(resolve, delayInMS));
                 }
-        
-                function startRecording(stream, lengthInMS) {
-                    let recorder = new MediaRecorder(stream);
+
+                function startMediaRecording(stream, lengthInMS, mimeType) {
+                    let recorder = new MediaRecorder(stream, { mimeType });
                     let data = [];
                     
                     recorder.ondataavailable = (event) => data.push(event.data);
@@ -53,78 +54,91 @@ async function main() {
                     
                     let recorded = wait(lengthInMS).then(() => {
                         if (recorder.state === "recording") {
-                        recorder.stop();
+                            recorder.stop();
                         }
                     });
                     
                     return Promise.all([stopped, recorded]).then(() => data);
                 }
-            
-                console.log("before mediadevices")
-                window.navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                    displaySurface: "browser"
-                    },
-                    audio: true,
-                    preferCurrentTab: true
-                }).then(async screenStream => {                        
-                    const audioContext = new AudioContext();
-                    const screenAudioStream = audioContext.createMediaStreamSource(screenStream)
-                    const audioEl1 = document.querySelectorAll("audio")[0];
-                    const audioEl2 = document.querySelectorAll("audio")[1];
-                    const audioEl3 = document.querySelectorAll("audio")[2];
-                    const audioElStream1 = audioContext.createMediaStreamSource(audioEl1.srcObject)
-                    const audioElStream2 = audioContext.createMediaStreamSource(audioEl3.srcObject)
-                    const audioElStream3 = audioContext.createMediaStreamSource(audioEl2.srcObject)
-        
-                    const dest = audioContext.createMediaStreamDestination();
-        
-                    screenAudioStream.connect(dest)
-                    audioElStream1.connect(dest)
-                    audioElStream2.connect(dest)
-                    audioElStream3.connect(dest)
-        
-                    // window.setInterval(() => {
-                    //   document.querySelectorAll("audio").forEach(audioEl => {
-                    //     if (!audioEl.getAttribute("added")) {
-                    //       console.log("adding new audio");
-                    //       const audioEl = document.querySelector("audio");
-                    //       const audioElStream = audioContext.createMediaStreamSource(audioEl.srcObject)
-                    //       audioEl.setAttribute("added", true);
-                    //       audioElStream.connect(dest)
-                    //     }
-                    //   })
-        
-                    // }, 2500);
                 
-                // Combine screen and audio streams
+                // Get screen stream for video
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { displaySurface: "browser" },
+                    audio: false // We'll handle audio separately for better control
+                });
+                
+                // Get all audio streams from the meeting
+                const audioElements = document.querySelectorAll("audio");
+                const audioContext = new AudioContext();
+                const audioDestination = audioContext.createMediaStreamDestination();
+                
+                // Connect all audio elements to our destination
+                Array.from(audioElements).forEach(audioEl => {
+                    if (audioEl.srcObject) {
+                        const source = audioContext.createMediaStreamSource(audioEl.srcObject);
+                        source.connect(audioDestination);
+                    }
+                });
+
+                // Get the combined audio stream
+                const audioStream = audioDestination.stream;
+                
+                // Create a combined stream for video with audio
                 const combinedStream = new MediaStream([
                     ...screenStream.getVideoTracks(),
-                    ...dest.stream.getAudioTracks()
+                    ...audioStream.getAudioTracks()
                 ]);
                 
-                console.log("before start recording")
-                const recordedChunks = await startRecording(combinedStream, 60000);
-                console.log("after start recording")
+                // Also keep a separate audio-only stream for transcription
+                const audioOnlyStream = new MediaStream([...audioStream.getAudioTracks()]);
                 
-                let recordedBlob = new Blob(recordedChunks, { type: "video/webm" });
+                // Start recording video with audio
+                console.log("Starting video recording with audio");
+                const videoChunks = startMediaRecording(combinedStream, 40000, 'video/webm');
                 
-                // Create download for video with audio
-                const recording = document.createElement("video");
-                recording.src = URL.createObjectURL(recordedBlob);
+                // Start recording audio only (for transcription)
+                console.log("Starting audio-only recording for transcription");
+                const audioChunks = startMediaRecording(audioOnlyStream, 40000, 'audio/webm');
                 
-                const downloadButton = document.createElement("a");
-                downloadButton.href = recording.src;
-                downloadButton.download = "RecordedScreenWithAudio.webm";    
-                downloadButton.click();
+                // Wait for both recordings to finish
+                const [videoData, audioData] = await Promise.all([videoChunks, audioChunks]);
                 
-                console.log("after download button click")
+                // Create blobs from the chunks
+                const videoBlob = new Blob(videoData, { type: 'video/webm' });
+                const audioBlob = new Blob(audioData, { type: 'audio/webm' });
+                
+                // Create download elements
+                const videoURL = URL.createObjectURL(videoBlob);
+                const audioURL = URL.createObjectURL(audioBlob);
+                
+                // Download video file (with audio)
+                const videoLink = document.createElement('a');
+                videoLink.href = videoURL;
+                videoLink.download = "Recorded Video File";
+                videoLink.click();
+                
+                // Download audio file (for transcription)
+                const audioLink = document.createElement('a');
+                audioLink.href = audioURL;
+                audioLink.download = "Recorded Audio File";
+                audioLink.click();
                 
                 // Clean up streams
                 screenStream.getTracks().forEach(track => track.stop());
-                // audioStream.getTracks().forEach(track => track.stop());
-                })
+                audioStream.getTracks().forEach(track => track.stop());
                 
+                // Give some time for downloads to start
+                await wait(2000);
+                
+                resolve({
+                    videoFilename: "Recorded Video File",
+                    audioFilename: "Recorded Audio File"
+                });
+            } catch (error) {
+                console.error("Error in recording:", error);
+                reject(error);
+            }
+        });
             `)
     
         console.log(response)
@@ -146,8 +160,10 @@ async function main() {
         await nameInput.sendKeys('value', "Meeting");
         await driver.sleep(randomDelay(1000, 4000));
         const buttonInput = await driver.wait(until.elementLocated(By.xpath('//span[contains(text(), "Ask to join")]')), 10000);
+        console.log("Asked to join")
         buttonInput.click();
         // wait until admin lets u join
+        await new Promise(x => setTimeout(x, 20000));
         await startScreenshare(driver); 
     } finally {
 
